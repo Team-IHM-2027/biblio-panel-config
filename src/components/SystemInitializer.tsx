@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, AlertCircle } from 'lucide-react';
 import InitializationPanel from '@/components/InitializationPanel';
-import ConfigurationPanel from '@/components/ConfigurationPanel';
+import ConfigurationPanel from '@/components/dashboard/SuperAdminDashboard';
 import LoginPage from '@/components/LoginPage';
 import { DatabaseInitializer } from '@/lib/database/initialization';
 import { useNotificationHelpers } from '@/hooks/useNotificationHelpers';
