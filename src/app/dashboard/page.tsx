@@ -1,13 +1,17 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import ConfigurationPanel from "@/components/ConfigurationPanel";
+import SuperAdminDashboard from '@/components/dashboard/SuperAdminDashboard';
 
 export default function DashboardPage() {
+  useEffect(() => {
+    console.log('DashboardPage mounted');
+  }, []);
+
   return (
     <ProtectedRoute>
-      <ConfigurationPanel />
+      <SuperAdminDashboard />
     </ProtectedRoute>
   );
 }
