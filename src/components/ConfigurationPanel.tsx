@@ -22,11 +22,13 @@ import {
     Eye
 } from 'lucide-react';
 import { CloudinaryUpload } from '@/components/ui/CloudinaryUpload';
-import { DatabaseInitializer } from '@/lib/database/initialization';
+import { DatabaseInitializer, OrgSettings } from '@/lib/database/initialization';
 import { useNotificationHelpers } from '@/hooks/useNotificationHelpers';
 import { AuthHeader } from '@/components/AuthHeader';
 import { Button } from '@/components/ui/Button';
 import { useTheme } from '@/contexts/themeContext';
+import { createSystemAlert } from '@/lib/alerts';
+import { useAuth } from '@/hooks/useAuth';
 import Image from 'next/image';
 
 // Schema de validation pour les paramètres organisationnels
@@ -74,6 +76,8 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
     const [previewMode, setPreviewMode] = useState(false);
     const { notifySuccess, notifyError } = useNotificationHelpers();
     const { applyTheme, colors: currentThemeColors } = useTheme();
+    const { user } = useAuth();
+    const [previousSettings, setPreviousSettings] = useState<OrgSettings | null>(null);
 
     const {
         register,
@@ -108,6 +112,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
     const rules = watch('SpecificBorrowingRules');
     const primaryColor = watch('Theme.Primary');
     const secondaryColor = watch('Theme.Secondary');
+    const openingHours = watch('OpeningHours');
 
     useEffect(() => {
         loadCurrentSettings();
@@ -129,6 +134,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
             const settings = await DatabaseInitializer.getOrgSettings();
             reset(settings);
             setLogo(settings.Logo);
+            setPreviousSettings(settings);
         } catch (error) {
             notifyError('Erreur', 'Impossible de charger les paramètres');
             console.error('Error loading settings:', error);
@@ -156,6 +162,26 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
 
             await DatabaseInitializer.updateOrgSettings(updatedData);
 
+            if (previousSettings) {
+                const changeDetails = getChangeDetails(previousSettings, updatedData);
+                if (changeDetails.length > 0) {
+                    await createSystemAlert({
+                        title: 'Configuration mise a jour',
+                        message: `Changements: ${changeDetails.join(" | ")}`,
+                        type: 'info',
+                        targetRole: 'librarian',
+                        createdBy: user?.email || user?.uid || null
+                    });
+                    await createSystemAlert({
+                        title: 'Mise a jour de votre bibliotheque',
+                        message: `Bonjour, une mise a jour vient d'etre effectuee: ${changeDetails.join(" | ")}`,
+                        type: 'info',
+                        targetRole: 'client',
+                        createdBy: user?.email || user?.uid || null
+                    });
+                }
+            }
+
             // Appliquer le thème définitivement
             applyTheme({
                 primary: data.Theme.Primary,
@@ -166,6 +192,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
             setSuccess('Paramètres sauvegardés avec succès !');
             setTimeout(() => setSuccess(null), 3000);
             onComplete?.();
+            setPreviousSettings(updatedData);
         } catch (error: unknown) {
             notifyError('Erreur de sauvegarde', 'Impossible de sauvegarder les paramètres');
             setError('Erreur lors de la sauvegarde');
@@ -174,6 +201,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
             setIsSaving(false);
         }
     };
+
 
     const addPenalty = () => {
         setValue('LateReturnPenalties', [...penalties, '']);
@@ -223,14 +251,103 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
         setValue('Theme.Secondary', secondary);
     };
 
+    const parseOpeningHours = (value?: string) => {
+        if (!value) return { open: '', close: '' };
+        try {
+            const parsed = JSON.parse(value) as { open?: string; close?: string };
+            return {
+                open: parsed.open || '',
+                close: parsed.close || ''
+            };
+        } catch (error) {
+            return { open: '', close: '' };
+        }
+    };
+
+    const formatOpeningHours = (value?: string) => {
+        const { open, close } = parseOpeningHours(value);
+        if (open === 'closed' || close === 'closed') return 'ferme';
+        if (!open && !close) return '';
+        return `${open}-${close}`;
+    };
+
+    const getChangeDetails = (previous: OrgSettings, current: OrgSettings) => {
+        const details: string[] = [];
+
+        if (previous.Name !== current.Name) {
+            details.push(`Organisation nom: "${previous.Name}" -> "${current.Name}"`);
+        }
+        if (previous.Address !== current.Address) {
+            details.push('Organisation adresse mise a jour');
+        }
+        if (previous.MaximumSimultaneousLoans !== current.MaximumSimultaneousLoans) {
+            details.push(`Organisation prets max: ${previous.MaximumSimultaneousLoans} -> ${current.MaximumSimultaneousLoans}`);
+        }
+        if (previous.Logo !== current.Logo) {
+            details.push('Organisation logo mis a jour');
+        }
+
+        if (previous.Contact.Email !== current.Contact.Email) {
+            details.push(`Contact email: ${previous.Contact.Email} -> ${current.Contact.Email}`);
+        }
+        if (previous.Contact.Phone !== current.Contact.Phone) {
+            details.push(`Contact telephone: ${previous.Contact.Phone} -> ${current.Contact.Phone}`);
+        }
+        if ((previous.Contact.WhatsApp || '') != (current.Contact.WhatsApp || '')) {
+            details.push(`Contact WhatsApp: ${previous.Contact.WhatsApp || '-'} -> ${current.Contact.WhatsApp || '-'}`);
+        }
+        if ((previous.Contact.Facebook || '') != (current.Contact.Facebook || '')) {
+            details.push('Contact Facebook mis a jour');
+        }
+        if ((previous.Contact.Instagram || '') != (current.Contact.Instagram || '')) {
+            details.push('Contact Instagram mis a jour');
+        }
+
+        if (previous.Theme.Primary !== current.Theme.Primary) {
+            details.push(`Theme primaire: ${previous.Theme.Primary} -> ${current.Theme.Primary}`);
+        }
+        if (previous.Theme.Secondary !== current.Theme.Secondary) {
+            details.push(`Theme secondaire: ${previous.Theme.Secondary} -> ${current.Theme.Secondary}`);
+        }
+
+        const dayLabels: Record<string, string> = {
+            Monday: 'Lundi',
+            Tuesday: 'Mardi',
+            Wednesday: 'Mercredi',
+            Thursday: 'Jeudi',
+            Friday: 'Vendredi',
+            Saturday: 'Samedi',
+            Sunday: 'Dimanche'
+        };
+
+        Object.keys(dayLabels).forEach((day) => {
+            const previousValue = previous.OpeningHours[day as keyof OrgSettings['OpeningHours']];
+            const currentValue = current.OpeningHours[day as keyof OrgSettings['OpeningHours']];
+            if (previousValue !== currentValue) {
+                details.push(`Horaires ${dayLabels[day]}: ${formatOpeningHours(previousValue)} -> ${formatOpeningHours(currentValue)}`);
+            }
+        });
+
+        const penaltiesChanged = JSON.stringify(previous.LateReturnPenalties || []) !== JSON.stringify(current.LateReturnPenalties || []);
+        const rulesChanged = JSON.stringify(previous.SpecificBorrowingRules || []) !== JSON.stringify(current.SpecificBorrowingRules || []);
+        if (penaltiesChanged) {
+            details.push('Regles: penalites mises a jour');
+        }
+        if (rulesChanged) {
+            details.push('Regles: regles d\'emprunt mises a jour');
+        }
+
+        return details;
+    };
+
     const TabButton = ({ id, label, icon: Icon }: { id: 'general' | 'contact' | 'hours' | 'rules' | 'theme', label: string, icon: React.ElementType }) => (
         <button
             type="button"
             onClick={() => setActiveTab(id)}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+            className={`tab-pill flex items-center space-x-2 px-4 py-2 rounded-xl ${
                 activeTab === id
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-gray-600 hover:bg-gray-100'
+                    ? 'tab-pill-active'
+                    : 'tab-pill-idle hover:scale-[1.02]'
             }`}
         >
             <Icon className="w-4 h-4" />
@@ -238,32 +355,57 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
         </button>
     );
 
-    const TimeInput = ({ day, register }: { day: string, register: unknown }) => {
-        if (typeof register !== 'function' || !register(day)?.onChange) {
-            throw new Error('Invalid register function');
-        }
+    const TimeInput = ({
+        day,
+        value,
+        setValue,
+        register
+    }: {
+        day: string,
+        value?: string,
+        setValue: (name: string, value: string, options?: { shouldDirty?: boolean }) => void,
+        register: (name: string) => { name: string }
+    }) => {
         const [hours, setHours] = useState({ open: '08:00', close: '18:00' });
         const [isClosed, setIsClosed] = useState(false);
 
-        const handleTimeChange = (type: 'open' | 'close', value: string) => {
-            const newHours = { ...hours, [type]: value };
+        useEffect(() => {
+            if (!value) return;
+            try {
+                const parsed = JSON.parse(value) as { open?: string; close?: string };
+                const closed = parsed.open === 'closed' || parsed.close === 'closed';
+                setIsClosed(closed);
+                setHours({
+                    open: parsed.open && parsed.open !== 'closed' ? parsed.open : '08:00',
+                    close: parsed.close && parsed.close !== 'closed' ? parsed.close : '18:00'
+                });
+            } catch (parseError) {
+                console.error('Invalid OpeningHours value:', parseError);
+            }
+        }, [value]);
+
+        const updateValue = (nextHours: { open: string; close: string }, closed: boolean) => {
+            const payload = closed ? { open: 'closed', close: 'closed' } : nextHours;
+            setValue(day, JSON.stringify(payload), { shouldDirty: true });
+        };
+
+        const handleTimeChange = (type: 'open' | 'close', nextValue: string) => {
+            const newHours = { ...hours, [type]: nextValue };
             setHours(newHours);
-            register(day).onChange({
-                target: { value: isClosed ? JSON.stringify({open: 'closed', close: 'closed'}) : JSON.stringify(newHours) }
-            });
+            updateValue(newHours, isClosed);
         };
 
         return (
             <div className="space-y-2">
+                <input type="hidden" {...register(day)} />
                 <div className="flex items-center space-x-2">
                     <input
                         type="checkbox"
                         checked={isClosed}
                         onChange={(e) => {
-                            setIsClosed(e.target.checked);
-                            register(day).onChange({
-                                target: { value: e.target.checked ? JSON.stringify({open: 'closed', close: 'closed'}) : JSON.stringify(hours) }
-                            });
+                            const closed = e.target.checked;
+                            setIsClosed(closed);
+                            updateValue(hours, closed);
                         }}
                         className="rounded"
                     />
@@ -292,7 +434,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
 
     if (isLoading) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+            <div className="min-h-screen panel-background flex items-center justify-center">
                 <div className="text-center">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-600" />
                     <p className="text-gray-600">Chargement des paramètres...</p>
@@ -302,7 +444,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen panel-background">
             {/* Header avec authentification */}
             <AuthHeader
                 title="Configuration de l'Organisation"
@@ -346,7 +488,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                 )}
 
                 {/* Navigation des onglets */}
-                <div className="mb-8 flex flex-wrap gap-2 bg-white p-2 rounded-lg shadow-sm">
+                <div className="mb-8 flex flex-wrap gap-2 panel-surface p-2 rounded-2xl shadow-sm fade-up">
                     <TabButton id="general" label="Général" icon={Building} />
                     <TabButton id="contact" label="Contact" icon={Mail} />
                     <TabButton id="hours" label="Horaires" icon={Clock} />
@@ -354,7 +496,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                     <TabButton id="theme" label="Thème" icon={Palette} />
                 </div>
 
-                <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+                <div className="panel-surface rounded-3xl shadow-xl overflow-hidden fade-up">
                     <div className="p-8">
                         {/* Onglet Général */}
                         {activeTab === 'general' && (
@@ -528,7 +670,12 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                                                                 day === 'Friday' ? 'Vendredi' :
                                                                     day === 'Saturday' ? 'Samedi' : 'Dimanche'}
                                             </h3>
-                                            <TimeInput day={`OpeningHours.${day}`} register={register} />
+                                            <TimeInput
+                                                day={`OpeningHours.${day}`}
+                                                value={(openingHours as Record<string, string> | undefined)?.[day]}
+                                                setValue={setValue}
+                                                register={register}
+                                            />
                                         </div>
                                     ))}
                                 </div>
@@ -907,6 +1054,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                                 </div>
                             </div>
                         )}
+
                     </div>
                 </div>
             </div>

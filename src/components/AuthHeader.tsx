@@ -60,20 +60,20 @@ export function AuthHeader({ title, subtitle, icon, children }: AuthHeaderProps)
     }, []);
 
     return (
-        <div className="bg-white shadow-sm border-b">
+        <div className="header-gradient header-glow">
             <div className="max-w-6xl mx-auto px-4 py-6">
                 <div className="flex items-center justify-between">
                     {/* Titre et icône */}
                     <div className="flex items-center space-x-3">
                         {icon && (
-                            <div className="p-2 bg-primary rounded-lg">
+                            <div className="p-2 bg-white/15 rounded-xl backdrop-blur">
                                 {icon}
                             </div>
                         )}
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+                            <h1 className="text-2xl font-bold text-white">{title}</h1>
                             {subtitle && (
-                                <p className="text-gray-600">{subtitle}</p>
+                                <p className="text-white/80">{subtitle}</p>
                             )}
                         </div>
                     </div>
@@ -87,20 +87,20 @@ export function AuthHeader({ title, subtitle, icon, children }: AuthHeaderProps)
                         {user && (
                             <div className="flex items-center space-x-3">
                                 <div className="hidden sm:block text-right">
-                                    <p className="text-sm font-medium text-gray-900">{user.name}</p>
-                                    <p className="text-xs text-gray-500">{user.email}</p>
+                                    <p className="text-sm font-medium text-white">{user.name}</p>
+                                    <p className="text-xs text-white/70">{user.email}</p>
                                 </div>
 
                                 {/* Menu utilisateur */}
                                 <div className="relative" ref={menuRef}>
                                     <button
                                         onClick={() => setIsMenuOpen(!isMenuOpen)}
-                                        className="flex items-center space-x-2 bg-gray-50 hover:bg-gray-100 px-3 py-2 rounded-lg transition-colors"
+                                        className="flex items-center space-x-2 bg-white/10 hover:bg-white/20 px-3 py-2 rounded-lg transition-colors"
                                     >
-                                        <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-                                            <User className="w-4 h-4 text-primary-foreground" />
+                                        <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
+                                            <User className="w-4 h-4 text-white" />
                                         </div>
-                                        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`} />
+                                        <ChevronDown className={`w-4 h-4 text-white/70 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`} />
                                     </button>
 
                                     {/* Menu déroulant */}

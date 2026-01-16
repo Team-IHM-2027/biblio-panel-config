@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -60,6 +62,7 @@
 
     body {
         @apply bg-background text-foreground;
+        font-family: 'Space Grotesk', 'Georgia', serif;
         transition: background-color 0.3s ease, color 0.3s ease;
     }
 
@@ -383,5 +386,58 @@
         background-color: hsl(var(--secondary) / 0.1);
         border: 1px solid hsl(var(--secondary) / 0.2);
         color: hsl(var(--secondary));
+    }
+
+    .panel-background {
+        background-image:
+            radial-gradient(circle at 15% 20%, hsl(var(--primary) / 0.15), transparent 45%),
+            radial-gradient(circle at 85% 10%, hsl(var(--secondary) / 0.12), transparent 40%),
+            linear-gradient(120deg, #f8fafc 0%, #eef2ff 40%, #f8fafc 100%);
+        background-attachment: fixed;
+    }
+
+    .panel-surface {
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.7);
+    }
+
+    .header-gradient {
+        background: linear-gradient(120deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+    }
+
+    .header-glow {
+        box-shadow: 0 18px 35px -30px hsl(var(--primary) / 0.6);
+    }
+
+    .tab-pill {
+        transition: all 0.2s ease;
+    }
+
+    .tab-pill-active {
+        background: linear-gradient(120deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+        color: white;
+        box-shadow: 0 10px 20px -14px hsl(var(--primary) / 0.8);
+    }
+
+    .tab-pill-idle {
+        background: rgba(255, 255, 255, 0.7);
+        color: #334155;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+    }
+
+    .fade-up {
+        animation: fadeUp 0.5s ease-out;
+    }
+
+    @keyframes fadeUp {
+        0% {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        100% {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 }

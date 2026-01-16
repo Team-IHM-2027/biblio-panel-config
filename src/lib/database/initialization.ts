@@ -129,6 +129,7 @@ const collectionsToCreate = [
     'OnlineCourses',
     'ClientMessages',
     'AdminMessages',
+    'SystemAlerts',
     'SuperAdmin',
     'BiblioWeb'
 ];
