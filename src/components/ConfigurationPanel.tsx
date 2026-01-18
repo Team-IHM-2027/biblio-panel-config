@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
+import type { Path, UseFormRegister, UseFormSetValue } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import {
@@ -65,6 +66,9 @@ type OrgSettingsFormData = z.infer<typeof orgSettingsSchema>;
 interface ConfigurationPanelProps {
     onComplete?: () => void;
 }
+
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
+type Day = typeof DAYS[number];
 
 export default function ConfigurationPanel({ onComplete }: ConfigurationPanelProps) {
     const [isLoading, setIsLoading] = useState(false);
@@ -259,7 +263,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                 open: parsed.open || '',
                 close: parsed.close || ''
             };
-        } catch (error) {
+        } catch  {
             return { open: '', close: '' };
         }
     };
@@ -361,10 +365,10 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
         setValue,
         register
     }: {
-        day: string,
+        day: Path<OrgSettingsFormData>,
         value?: string,
-        setValue: (name: string, value: string, options?: { shouldDirty?: boolean }) => void,
-        register: (name: string) => { name: string }
+        setValue: UseFormSetValue<OrgSettingsFormData>,
+        register: UseFormRegister<OrgSettingsFormData>
     }) => {
         const [hours, setHours] = useState({ open: '08:00', close: '18:00' });
         const [isClosed, setIsClosed] = useState(false);
@@ -660,7 +664,7 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                                 <h2 className="text-xl font-semibold text-gray-900 mb-6">Horaires d&apos;Ouverture</h2>
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => (
+                                    {DAYS.map((day) => (
                                         <div key={day} className="border border-gray-200 rounded-lg p-4">
                                             <h3 className="font-medium text-gray-900 mb-3">
                                                 {day === 'Monday' ? 'Lundi' :
@@ -671,8 +675,8 @@ export default function ConfigurationPanel({ onComplete }: ConfigurationPanelPro
                                                                     day === 'Saturday' ? 'Samedi' : 'Dimanche'}
                                             </h3>
                                             <TimeInput
-                                                day={`OpeningHours.${day}`}
-                                                value={(openingHours as Record<string, string> | undefined)?.[day]}
+                                                day={`OpeningHours.${day}` as Path<OrgSettingsFormData>}
+                                                value={(openingHours as Record<Day, string> | undefined)?.[day]}
                                                 setValue={setValue}
                                                 register={register}
                                             />
