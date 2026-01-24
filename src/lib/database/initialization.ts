@@ -52,6 +52,7 @@ export interface OrgSettings {
   Logo: string;
   MaximumSimultaneousLoans: number;
   Name: string;
+  MaintenanceMode?: boolean;
   OpeningHours: {
     Monday: string;
     Tuesday: string;
@@ -102,6 +103,7 @@ const defaultOrgSettings: OrgSettings = {
   Logo: "",
   MaximumSimultaneousLoans: 3,
   Name: "",
+  MaintenanceMode: false,
   OpeningHours: {
     Monday: '{"open": "08:00", "close": "18:00"}',
     Tuesday: '{"open": "08:00", "close": "18:00"}',
