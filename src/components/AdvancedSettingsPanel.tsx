@@ -16,10 +16,12 @@ import {
     Wrench,
     Download
 } from 'lucide-react';
+import { collection, getDoc, getDocs, doc, setDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { DatabaseInitializer } from '@/lib/database/initialization';
 import { useNotificationHelpers } from '@/hooks/useNotificationHelpers';
 import { AuthHeader } from '@/components/AuthHeader';
 import { Button } from '@/components/ui/Button';
+import { db } from '@/lib/firebase';
 
 // Schema pour les paramètres d'application
 const appSettingsSchema = z.object({
@@ -44,14 +46,10 @@ export default function AdvancedSettingsPanel() {
     const [activeTab, setActiveTab] = useState<'app' | 'system' | 'maintenance'>('app');
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [systemStats] = useState<SystemStats>({
-        totalUsers: 156,
-        totalBooks: 2847,
-        activeLoans: 89,
-        overdueBooks: 12,
-        systemUptime: '15 jours',
-        lastBackup: 'Il y a 2 heures'
-    });
+    const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
+    const [isStatsLoading, setIsStatsLoading] = useState(false);
+    const [isBackupRunning, setIsBackupRunning] = useState(false);
+    const [isCleanupRunning, setIsCleanupRunning] = useState(false);
 
     const { notifySuccess, notifyError } = useNotificationHelpers();
 
@@ -75,6 +73,7 @@ export default function AdvancedSettingsPanel() {
 
     useEffect(() => {
         loadAppSettings();
+        loadSystemStats();
     }, []);
 
     const loadAppSettings = async () => {
@@ -100,6 +99,164 @@ export default function AdvancedSettingsPanel() {
             console.log(error);
         } finally {
             setIsSaving(false);
+        }
+    };
+
+
+    const formatUptime = (value: unknown) => {
+        if (!value) return 'Non disponible';
+        const date = typeof (value as { toDate?: () => Date }).toDate === 'function'
+            ? (value as { toDate: () => Date }).toDate()
+            : value instanceof Date
+                ? value
+                : null;
+        if (!date) return 'Non disponible';
+
+        const diffMs = Date.now() - date.getTime();
+        if (diffMs < 0) return 'Non disponible';
+
+        const dayMs = 24 * 60 * 60 * 1000;
+        const days = Math.floor(diffMs / dayMs);
+        const hours = Math.floor((diffMs % dayMs) / (60 * 60 * 1000));
+
+        if (days <= 0) return `${Math.max(hours, 0)} h`;
+        if (hours <= 0) return `${days} j`;
+        return `${days} j ${hours} h`;
+    };
+
+    const loadSystemStats = async () => {
+        setIsStatsLoading(true);
+        try {
+            const usersSnap = await getDocs(collection(db, 'BiblioUser'));
+            const userDocs = usersSnap.docs.filter((docItem) => docItem.id !== '_placeholder');
+
+            let activeLoans = 0;
+            let overdueBooks = 0;
+
+            userDocs.forEach((docItem) => {
+                const data = docItem.data() as Record<string, unknown>;
+                Object.keys(data).forEach((key) => {
+                    if (!/^etat\d+$/.test(key)) return;
+                    const value = data[key];
+                    if (value === 'emprunt') activeLoans += 1;
+                    if (value === 'retard') overdueBooks += 1;
+                });
+            });
+
+            const booksSnap = await getDocs(collection(db, 'BiblioBooks'));
+            const bookDocs = booksSnap.docs.filter((docItem) => docItem.id !== '_placeholder');
+
+            const initSnap = await getDoc(doc(db, 'Configuration', 'initialized'));
+            const initData = initSnap.exists() ? initSnap.data() : null;
+            const systemUptime = formatUptime(initData?.initializedAt);
+
+            const maintenanceSnap = await getDoc(doc(db, 'Configuration', 'SystemMaintenance'));
+            const maintenanceData = maintenanceSnap.exists() ? maintenanceSnap.data() : null;
+            const lastBackup = formatUptime(maintenanceData?.lastBackupAt);
+
+            setSystemStats({
+                totalUsers: userDocs.length,
+                totalBooks: bookDocs.length,
+                activeLoans,
+                overdueBooks,
+                systemUptime,
+                lastBackup
+            });
+        } catch (error) {
+            notifyError('Erreur', 'Impossible de charger les statistiques du systeme');
+            setSystemStats(null);
+            console.error('Error loading system stats:', error);
+        } finally {
+            setIsStatsLoading(false);
+        }
+    };
+
+    const handleDatabaseBackup = async () => {
+        setIsBackupRunning(true);
+        try {
+            const [orgSnap, appSnap, notificationsSnap] = await Promise.all([
+                getDoc(doc(db, 'Configuration', 'OrgSettings')),
+                getDoc(doc(db, 'Configuration', 'AppSettings')),
+                getDoc(doc(db, 'Configuration', 'Notifications'))
+            ]);
+
+            const usersSnap = await getDocs(collection(db, 'BiblioUser'));
+            const booksSnap = await getDocs(collection(db, 'BiblioBooks'));
+            const thesesSnap = await getDocs(collection(db, 'BiblioThesis'));
+
+            const backupPayload = {
+                exported_at: new Date().toISOString(),
+                configuration: {
+                    orgSettings: orgSnap.exists() ? orgSnap.data() : null,
+                    appSettings: appSnap.exists() ? appSnap.data() : null,
+                    notifications: notificationsSnap.exists() ? notificationsSnap.data() : null
+                },
+                stats: {
+                    totalUsers: usersSnap.docs.filter((docItem) => docItem.id !== '_placeholder').length,
+                    totalBooks: booksSnap.docs.filter((docItem) => docItem.id !== '_placeholder').length,
+                    totalTheses: thesesSnap.docs.filter((docItem) => docItem.id !== '_placeholder').length
+                }
+            };
+
+            const blob = new Blob([JSON.stringify(backupPayload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `biblio-backup-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+
+            await setDoc(doc(db, 'Configuration', 'SystemMaintenance'), {
+                lastBackupAt: serverTimestamp(),
+                lastBackupSummary: backupPayload.stats,
+                lastBackupType: 'manual'
+            }, { merge: true });
+
+            await loadSystemStats();
+            notifySuccess('Sauvegarde terminÃ©e', 'La sauvegarde a Ã©tÃ© gÃ©nÃ©rÃ©e et enregistrÃ©e.');
+        } catch (error) {
+            console.error('Backup error:', error);
+            notifyError('Erreur', 'Impossible de crÃ©er la sauvegarde.');
+        } finally {
+            setIsBackupRunning(false);
+        }
+    };
+
+    const handleSystemCleanup = async () => {
+        setIsCleanupRunning(true);
+        try {
+            const alertsSnap = await getDocs(collection(db, 'SystemAlerts'));
+            const batch = writeBatch(db);
+            const now = Date.now();
+            const retentionMs = 30 * 24 * 60 * 60 * 1000;
+            let removed = 0;
+
+            alertsSnap.docs.forEach((alertDoc) => {
+                const data = alertDoc.data() as { read?: boolean; createdAt?: { toDate?: () => Date } };
+                if (!data?.read) return;
+                const createdAt = data.createdAt?.toDate ? data.createdAt.toDate() : null;
+                if (!createdAt) return;
+                if (now - createdAt.getTime() > retentionMs) {
+                    batch.delete(alertDoc.ref);
+                    removed += 1;
+                }
+            });
+
+            if (removed > 0) {
+                await batch.commit();
+            }
+
+            await setDoc(doc(db, 'Configuration', 'SystemMaintenance'), {
+                lastCleanupAt: serverTimestamp(),
+                lastCleanupRemoved: removed
+            }, { merge: true });
+
+            notifySuccess('Nettoyage terminÃ©', `Alertes supprimÃ©es : ${removed}`);
+        } catch (error) {
+            console.error('Cleanup error:', error);
+            notifyError('Erreur', 'Impossible de nettoyer le systÃ¨me.');
+        } finally {
+            setIsCleanupRunning(false);
         }
     };
 
@@ -307,63 +464,81 @@ export default function AdvancedSettingsPanel() {
                         <div className="bg-white rounded-xl shadow-lg p-8">
                             <h2 className="text-xl font-semibold text-gray-900 mb-6">Statistiques du Système</h2>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                                <StatCard
-                                    icon={Users}
-                                    label="Utilisateurs totaux"
-                                    value={systemStats.totalUsers}
-                                    colorScheme="primary"
-                                />
-                                <StatCard
-                                    icon={BookOpen}
-                                    label="Livres en catalogue"
-                                    value={systemStats.totalBooks}
-                                    colorScheme="secondary"
-                                />
-                                <StatCard
-                                    icon={BarChart3}
-                                    label="Prêts actifs"
-                                    value={systemStats.activeLoans}
-                                    colorScheme="success"
-                                />
-                                <StatCard
-                                    icon={AlertCircle}
-                                    label="Livres en retard"
-                                    value={systemStats.overdueBooks}
-                                    colorScheme="warning"
-                                />
-                            </div>
+                            {isStatsLoading && !systemStats ? (
+                                <div className="py-12 text-center text-gray-600">
+                                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-primary" />
+                                    Chargement des statistiques...
+                                </div>
+                            ) : systemStats ? (
+                                <>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                                        <StatCard
+                                            icon={Users}
+                                            label="Utilisateurs totaux"
+                                            value={systemStats.totalUsers}
+                                            colorScheme="primary"
+                                        />
+                                        <StatCard
+                                            icon={BookOpen}
+                                            label="Livres en catalogue"
+                                            value={systemStats.totalBooks}
+                                            colorScheme="secondary"
+                                        />
+                                        <StatCard
+                                            icon={BarChart3}
+                                            label="Prêts actifs"
+                                            value={systemStats.activeLoans}
+                                            colorScheme="success"
+                                        />
+                                        <StatCard
+                                            icon={AlertCircle}
+                                            label="Livres en retard"
+                                            value={systemStats.overdueBooks}
+                                            colorScheme="warning"
+                                        />
+                                    </div>
 
-                            {/* Informations système supplémentaires */}
-                            <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="p-6 bg-gradient-to-r from-primary/5 to-primary/10 rounded-lg border border-primary/20">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-3">État du système</h3>
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">Temps de fonctionnement :</span>
-                                            <span className="font-medium text-primary">{systemStats.systemUptime}</span>
+                                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="p-6 bg-gradient-to-r from-primary/5 to-primary/10 rounded-lg border border-primary/20">
+                                            <h3 className="text-lg font-semibold text-gray-900 mb-3">Etat du système</h3>
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Temps de fonctionnement :</span>
+                                                    <span className="font-medium text-primary">{systemStats.systemUptime}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Dernière sauvegarde :</span>
+                                                    <span className="font-medium text-green-600">{systemStats.lastBackup}</span>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">Dernière sauvegarde :</span>
-                                            <span className="font-medium text-green-600">{systemStats.lastBackup}</span>
+
+                                        <div className="p-6 bg-gradient-to-r from-secondary/5 to-secondary/10 rounded-lg border border-secondary/20">
+                                            <h3 className="text-lg font-semibold text-gray-900 mb-3">Performance</h3>
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Taux d'emprunts actifs :</span>
+                                                    <span className="font-medium text-secondary">
+                                                        {systemStats.totalBooks > 0
+                                                            ? `${Math.round((systemStats.activeLoans / systemStats.totalBooks) * 100)}%`
+                                                            : '0%'}
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Taux de retards :</span>
+                                                    <span className="font-medium text-green-600">
+                                                        {systemStats.activeLoans > 0
+                                                            ? `${Math.round((systemStats.overdueBooks / systemStats.activeLoans) * 100)}%`
+                                                            : '0%'}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-
-                                <div className="p-6 bg-gradient-to-r from-secondary/5 to-secondary/10 rounded-lg border border-secondary/20">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-3">Performance</h3>
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">Taux d&apos;utilisation :</span>
-                                            <span className="font-medium text-secondary">87%</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-gray-600">Espace disque :</span>
-                                            <span className="font-medium text-green-600">2.4 GB libres</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                                </>
+                            ) : (
+                                <div className="py-12 text-center text-gray-600">Statistiques indisponibles.</div>
+                            )}
                         </div>
                     )}
 
@@ -403,15 +578,25 @@ export default function AdvancedSettingsPanel() {
                                         <h3 className="text-lg font-medium text-gray-900">Sauvegarde de la base de données</h3>
                                     </div>
                                     <p className="text-gray-700 mb-4">
-                                        Créer une sauvegarde complète de toutes les données du système.
+                                        Genere un fichier JSON de sauvegarde (configuration + statistiques) et enregistre la date de sauvegarde.
                                     </p>
                                     <Button
                                         variant="secondary"
                                         className="hover:bg-secondary/90 transition-colors"
-                                        onClick={() => notifySuccess('Sauvegarde', 'Fonctionnalité à venir')}
+                                        onClick={handleDatabaseBackup}
+                                        disabled={isBackupRunning}
                                     >
-                                        <Database className="w-4 h-4 mr-2" />
-                                        Créer une sauvegarde
+                                        {isBackupRunning ? (
+                                            <>
+                                                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                                Sauvegarde...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Database className="w-4 h-4 mr-2" />
+                                                Creer une sauvegarde
+                                            </>
+                                        )}
                                     </Button>
                                 </div>
 
@@ -424,15 +609,25 @@ export default function AdvancedSettingsPanel() {
                                         <h3 className="text-lg font-medium text-gray-900">Nettoyage système</h3>
                                     </div>
                                     <p className="text-gray-700 mb-4">
-                                        Supprimer les fichiers temporaires et optimiser les performances.
+                                        Supprime les alertes systeme lues depuis plus de 30 jours.
                                     </p>
                                     <Button
                                         variant="outline"
                                         className="border-yellow-300 text-yellow-700 hover:bg-yellow-50 transition-colors"
-                                        onClick={() => notifySuccess('Nettoyage', 'Fonctionnalité à venir')}
+                                        onClick={handleSystemCleanup}
+                                        disabled={isCleanupRunning}
                                     >
-                                        <RefreshCw className="w-4 h-4 mr-2" />
-                                        Nettoyer le système
+                                        {isCleanupRunning ? (
+                                            <>
+                                                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                                                Nettoyage...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <RefreshCw className="w-4 h-4 mr-2" />
+                                                Nettoyer le syst?me
+                                            </>
+                                        )}
                                     </Button>
                                 </div>
                             </div>
